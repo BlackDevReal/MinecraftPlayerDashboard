@@ -15,8 +15,9 @@
   },
   "dependencies": {
     "@nuxt/http": "^0.6.4",
-    "@nuxtjs/proxy": "^2.1.0",
     "laby.net": "^0.0.8",
+    "skinview3d": "^3.1.0",
+    "three": "^0.175.0",
     "vue-toastification": "^2.0.0-rc.5"
   }
 }

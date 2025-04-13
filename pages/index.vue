@@ -10,16 +10,11 @@
 
     <div v-if="player" class="player-info">
       <div class="left">
-        <a
-            :href="`https://skins.mcstats.com/skull/${player.uuid}?scale=1&fallbackTexture=steve&overlay=true&cropMeasurement=pixels&expandMeasurement=pixels&cropLeft=0&cropRight=0&cropTop=0&cropBottom=0&expandLeft=0&expandRight=0&expandTop=0&expandBottom=0&alwaysSquare=true&grayscale=false`"
-            download
-        >
-          <img
-              class="head"
-              :src="`https://skins.mcstats.com/skull/${player.uuid}?scale=1&fallbackTexture=steve&overlay=true&cropMeasurement=pixels&expandMeasurement=pixels&cropLeft=0&cropRight=0&cropTop=0&cropBottom=0&expandLeft=0&expandRight=0&expandTop=0&expandBottom=0&alwaysSquare=true&grayscale=false`"
-              alt="Player Head"
-          />
-        </a>
+        <img
+            class="head"
+            :src="`https://skins.mcstats.com/skull/${player.uuid}?scale=2`"
+            alt="Player Head"
+        />
         <h2>{{ player.name }}</h2>
         <p><strong>UUID:</strong> {{ player.uuid }}</p>
         <p><strong>Slim Model:</strong> {{ player.texture.slim ? 'Yes' : 'No' }}</p>
@@ -28,106 +23,123 @@
         <ul>
           <li v-for="(name, index) in sortedNameHistory" :key="index">
             {{ name.name }}
-            <span v-if="name.changedAt">
-              (Changed {{ timeAgo(name.changedAt) }})
-            </span>
-            <span v-else>
-              (No change date available)
-            </span>
+            <span v-if="name.changedAt">(Changed {{ timeAgo(name.changedAt) }})</span>
           </li>
         </ul>
-
-        <h3>Skin</h3>
-        <a :href="player.texture.image" download>
-          <img class="skin-preview" :src="player.texture.image" alt="Skin" />
-        </a>
       </div>
 
       <div class="right">
-        <h3>3D Render</h3>
-        <a
-            :href="`https://skins.mcstats.com/body/front/${player.uuid}?scale=1&fov=50&shadow=true&disableCosmeticType=all&fallbackTexture=steve&overlay=true&cropMeasurement=pixels&expandMeasurement=pixels&cropLeft=0&cropRight=0&cropTop=0&cropBottom=0&expandLeft=0&expandRight=0&expandTop=0&expandBottom=0&alwaysSquare=true&grayscale=false`"
-            download
-        >
-          <img
-              class="render"
-              :src="`https://skins.mcstats.com/body/front/${player.uuid}?scale=1&fov=50&shadow=true&disableCosmeticType=all&fallbackTexture=steve&overlay=true&cropMeasurement=pixels&expandMeasurement=pixels&cropLeft=0&cropRight=0&cropTop=0&cropBottom=0&expandLeft=0&expandRight=0&expandTop=0&expandBottom=0&alwaysSquare=true&grayscale=false`"
-              alt="3D Render"
-          />
-        </a>
+        <div class="right-container">
+          <h3>3D Viewer</h3>
+          <div ref="viewerContainer" class="render-3d">
+            <canvas id="skinCanvas" class="canvas"></canvas>
+          </div>
+
+          <h3>Skin</h3>
+          <a :href="player.texture.image" download>
+            <img class="skin-preview" :src="player.texture.image" alt="Skin" />
+          </a>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
+
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useToast } from 'vue-toastification'
+import { SkinViewer, WalkingAnimation } from 'skinview3d'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 
 const toast = useToast()
 const username = ref('')
 const player = ref(null)
 const nameHistory = ref([])
 
+let viewerInstance = null
+let controlsInstance = null
+
 async function fetchPlayer() {
   try {
-    const playerRes = await fetch(`https://api.dev.night.design/v2/players/${username.value}`)
-    if (!playerRes.ok) throw new Error('Player not found')
-    const playerData = await playerRes.json()
+    const res = await fetch(`https://api.dev.night.design/v2/players/${username.value}`)
+    if (!res.ok) throw new Error('Player not found')
+    const data = await res.json()
+    player.value = data.data.player
 
-    player.value = playerData.data.player
+    const historyRes = await fetch(`https://api.dev.night.design/v2/players/${player.value.uuid}/names`)
+    if (!historyRes.ok) throw new Error('Could not fetch name history')
+    const historyData = await historyRes.json()
+    nameHistory.value = historyData.data.names
 
-    const nameHistoryRes = await fetch(`https://api.dev.night.design/v2/players/${player.value.uuid}/names`)
-    if (!nameHistoryRes.ok) throw new Error('Could not fetch name history')
-    const nameHistoryData = await nameHistoryRes.json()
-
-    nameHistory.value = nameHistoryData.data.names
-
-    toast.success("Player data loaded!")
+    toast.success('Player data loaded!')
   } catch (err) {
     toast.error(err.message)
   }
 }
 
 const sortedNameHistory = computed(() => {
-  return nameHistory.value
-      .sort((a, b) => {
-        const dateA = a.changedAt ? new Date(a.changedAt).getTime() : 0
-        const dateB = b.changedAt ? new Date(b.changedAt).getTime() : 0
-        return dateB - dateA
-      })
+  return nameHistory.value.sort((a, b) => {
+    const dateA = a.changedAt ? new Date(a.changedAt).getTime() : 0
+    const dateB = b.changedAt ? new Date(b.changedAt).getTime() : 0
+    return dateB - dateA
+  })
 })
 
 const timeAgo = (dateString) => {
   const now = new Date()
   const date = new Date(dateString)
-  const diffInSeconds = Math.floor((now - date) / 1000)
-
-  if (diffInSeconds < 60) {
-    return `${diffInSeconds} second${diffInSeconds > 1 ? 's' : ''} ago`
-  }
-
-  const diffInMinutes = Math.floor(diffInSeconds / 60)
-  if (diffInMinutes < 60) {
-    return `${diffInMinutes} minute${diffInMinutes > 1 ? 's' : ''} ago`
-  }
-
-  const diffInHours = Math.floor(diffInMinutes / 60)
-  if (diffInHours < 24) {
-    return `${diffInHours} hour${diffInHours > 1 ? 's' : ''} ago`
-  }
-
-  const diffInDays = Math.floor(diffInHours / 24)
-  if (diffInDays < 30) {
-    return `${diffInDays} day${diffInDays > 1 ? 's' : ''} ago`
-  }
-
-  const diffInMonths = Math.floor(diffInDays / 30)
-  if (diffInMonths < 12) {
-    return `${diffInMonths} month${diffInMonths > 1 ? 's' : ''} ago`
-  }
-
-  const diffInYears = Math.floor(diffInMonths / 12)
-  return `${diffInYears} year${diffInYears > 1 ? 's' : ''} ago`
+  const diff = Math.floor((now - date) / 1000)
+  if (diff < 60) return `${diff}s ago`
+  const mins = Math.floor(diff / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  if (days < 30) return `${days}d ago`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months}mo ago`
+  return `${Math.floor(months / 12)}y ago`
 }
+
+watch(player, async () => {
+  if (!player.value) return
+
+  if (viewerInstance) {
+    viewerInstance.dispose()
+    viewerInstance = null
+  }
+
+  await nextTick()
+
+  const canvas = document.getElementById('skinCanvas')
+  if (!canvas) {
+    console.warn('Canvas not found!')
+    return
+  }
+
+  viewerInstance = new SkinViewer({
+    canvas,
+    width: 300,
+    height: 400,
+    skin: player.value.texture.image
+  })
+
+  viewerInstance.background = 0x2c3e50
+  viewerInstance.zoom = 1
+
+  viewerInstance.animation = new WalkingAnimation()
+  viewerInstance.animation.speed = 1
+
+  controlsInstance = new OrbitControls(viewerInstance.camera, canvas)
+  controlsInstance.enableDamping = true
+  controlsInstance.dampingFactor = 0.1
+  controlsInstance.zoomSpeed = 0.5
+
+  const animate = () => {
+    requestAnimationFrame(animate)
+    controlsInstance.update()
+  }
+  animate()
+})
 </script>
